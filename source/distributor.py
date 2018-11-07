@@ -44,7 +44,7 @@ class Distributor:
         try:
             self.filesTable = pd.read_csv(filesList,sep=' ',comment='#',header=None,names=['filename','size'],dtype={'filename':str,'size': int})
             #Add a column for assignment to nodes
-            self.filesTable['node'] = 'Null'
+            self.filesTable['node'] = 'NULL'
 
             self.nodesTable = pd.read_csv(nodesList,sep=' ',comment='#',header=None,names=['nodename','totalSpace'],dtype={'nodename':str,'totalSpace': int})
             #Add columns to track allocated space and remaining space on nodes - saves repeat calculations on the fly, and number of nodes should (hopefully!) be small wrt memory
@@ -102,7 +102,7 @@ class Distributor:
             self._pack_subsets_onto_nodes()
 
             #Now find the remaining files that have not yet been allocated to a node and try to do so
-            unallocated_files = self.filesTable[self.filesTable['node'] == 'Null']
+            unallocated_files = self.filesTable[self.filesTable['node'] == 'NULL']
             self._bin_pack(unallocated_files,'size',self.nodesTable,'allocatedSpace','freeSpace',self._assign_file_to_node)
 
         #Check that our proposed distribution makes sense
@@ -143,7 +143,7 @@ class Distributor:
         """
         #Check that all nodes actually exist - should be impossible for this to fail but can't hurt to check.
         for node in self.filesTable.node.unique():
-            if node != 'Null':
+            if node != 'NULL':
                 if not node in self.nodesTable.index.values:
                     return False
 
@@ -294,7 +294,7 @@ class Distributor:
             nodename (str): index of the node to be assigned to
 
         """
-        if (self.filesTable.loc[filename,'node'] == 'Null'):
+        if (self.filesTable.loc[filename,'node'] == 'NULL'):
             self.filesTable.loc[filename,'node'] = nodename
             self.nodesTable.loc[nodename,'freeSpace'] -= self.filesTable.loc[filename,'size']
             self.nodesTable.loc[nodename,'allocatedSpace'] += self.filesTable.loc[filename,'size']
