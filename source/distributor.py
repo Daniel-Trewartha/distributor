@@ -47,8 +47,9 @@ class Distributor:
             self.filesTable['node'] = 'Null'
 
             self.nodesTable = pd.read_csv(nodesList,sep=' ',comment='#',header=None,names=['nodename','totalSpace'],dtype={'nodename':str,'totalSpace': int})
-            #Add a column to track remaining free space as files are assigned to nodes - saves unnecessary repeat operations
+            #Add columns to track allocated space and remaining space on nodes - saves repeat calculations on the fly, and number of nodes should (hopefully!) be small wrt memory
             self.nodesTable['freeSpace'] = self.nodesTable['totalSpace']
+            self.nodesTable['allocatedSpace'] = 0
 
         except Exception as e:
             print("Error parsing input: "+str(e))
@@ -86,7 +87,7 @@ class Distributor:
         self.nodesTable.sort_values('totalSpace',ascending=True,inplace=True)
 
         if (fileSizePerNode > medianNodeSpace):
-            self._bin_pack(self.filesTable,'size',self.nodesTable,'freeSpace',self._assign_file_to_node)
+            self._bin_pack(self.filesTable,'size',self.nodesTable,'allocatedSpace','freeSpace',self._assign_file_to_node)
         else:
             #Add a column for partitioning into subsets
             self.filesTable['subset'] = None
@@ -102,7 +103,7 @@ class Distributor:
 
             #Now find the remaining files that have not yet been allocated to a node and try to do so
             unallocated_files = self.filesTable[self.filesTable['node'] == 'Null']
-            self._bin_pack(unallocated_files,'size',self.nodesTable,'freeSpace',self._assign_file_to_node)
+            self._bin_pack(unallocated_files,'size',self.nodesTable,'allocatedSpace','freeSpace',self._assign_file_to_node)
 
         #Check that our proposed distribution makes sense
         if (not self._check_distribution_validity()):           
@@ -170,7 +171,7 @@ class Distributor:
 
     """
 
-    def _first_fit_bin_pack(self,values,valuesSizeCol,bins,binsSizeCol,assign_function):
+    def _first_fit_bin_pack(self,values,valuesSizeCol,bins,binsAllocatedCol,binsRemainingCol,assign_function):
         """Pack values into bins using the first fit algorithm.
         Traverse the list of values, assigning each to the first bin that has space for it.
 
@@ -178,16 +179,17 @@ class Distributor:
             values (pd.dataframe): Dataframe of values with their sizes.  Assumed sorted ascending by size.
             valuesSizeCol (str): The column containing the size of values.
             bins (pd.dataframe): Dataframe of bins with their remaining sizes. Assumed sorted ascending by size.
-            binsSizeCol (str): The column containing the size of bins. This column should be appropriately updated as values are assigned to bins.
+            binsAllocatedCol (str): The column containing the total amount currently allocated to bins. This column should be appropriately updated as values are assigned to bins.
+            binsRemainingCol (str): The column containing the Remaining capacity of bins. This column should be appropriately updated as values are assigned to bins.
             assign_function (:function: value, bin): A function which assigns value to bin, and updates the tables accordingly.
 
         """
         for v in range(len(values)):
-            firstFit = bins[(bins['freeSpace'] >= values.iloc[v][valuesSizeCol])].head(1)
-            if (len(firstFit == 1)):
+            firstFit = bins[(bins[binsRemainingCol] >= values.iloc[v][valuesSizeCol])].head(1)
+            if (len(firstFit) == 1):
                 assign_function(values.index[v],firstFit.index[0])
 
-    def _last_fit_bin_pack(self,values,valuesSizeCol,bins,binsSizeCol,assign_function):
+    def _last_fit_bin_pack(self,values,valuesSizeCol,bins,binsAllocatedCol,binsRemainingCol,assign_function):
         """Pack values into bins using the last fit algorithm.
         Traverse the list of values, assigning each to the last bin that has space for it.
 
@@ -195,16 +197,17 @@ class Distributor:
             values (pd.dataframe): Dataframe of values with their sizes.  Assumed sorted ascending by size.
             valuesSizeCol (str): The column containing the size of values.
             bins (pd.dataframe): Dataframe of bins with their remaining sizes. Assumed sorted ascending by size.
-            binsSizeCol (str): The column containing the size of bins. This column should be appropriately updated as values are assigned to bins.
+            binsAllocatedCol (str): The column containing the total amount currently allocated to bins. This column should be appropriately updated as values are assigned to bins.
+            binsRemainingCol (str): The column containing the Remaining capacity of bins. This column should be appropriately updated as values are assigned to bins.
             assign_function (:function: value, bin): A function which assigns value to bin, and updates the tables accordingly.
 
         """
         for v in range(len(values)):
-            firstFit = bins[(bins['freeSpace'] >= values.iloc[v][valuesSizeCol])].tail(1)
-            if (len(firstFit == 1)):
+            firstFit = bins[(bins[binsRemainingCol] >= values.iloc[v][valuesSizeCol])].tail(1)
+            if (len(firstFit) == 1):
                 assign_function(values.index[v],firstFit.index[0])
 
-    def _emptiest_fit_bin_pack(self,values,valuesSizeCol,bins,binsSizeCol,assign_function):
+    def _emptiest_fit_bin_pack(self,values,valuesSizeCol,bins,binsAllocatedCol,binsRemainingCol,assign_function):
         """Pack values into bins using the emptiest fit algorithm.
         Traverse the list of values, assigning each to the emptiest bin (ie the one with the least currently assigned to it) that has room for it.
 
@@ -212,16 +215,18 @@ class Distributor:
             values (pd.dataframe): Dataframe of values with their sizes.  Assumed sorted ascending by size.
             valuesSizeCol (str): The column containing the size of values.
             bins (pd.dataframe): Dataframe of bins with their remaining sizes. Assumed sorted ascending by size.
-            binsSizeCol (str): The column containing the size of bins. This column should be appropriately updated as values are assigned to bins.
+            binsAllocatedCol (str): The column containing the total amount currently allocated to bins. This column should be appropriately updated as values are assigned to bins.
+            binsRemainingCol (str): The column containing the Remaining capacity of bins. This column should be appropriately updated as values are assigned to bins.
             assign_function (:function: value, bin): A function which assigns value to bin, and updates the tables accordingly.
 
         """
         for v in range(len(values)):
-            firstFit = bins[(bins['freeSpace'] >= values.iloc[v][valuesSizeCol])].sort_values(binsSizeCol,ascending=False,inplace=False).head(1)
-            if (len(firstFit == 1)):
-                assign_function(values.index[v],firstFit.index[0])
+            remainingBins = bins[(bins[binsRemainingCol] >= values.iloc[v][valuesSizeCol])][binsAllocatedCol]
+            if(len(remainingBins) > 0):
+                firstFit = remainingBins.idxmin(axis=1)
+                assign_function(values.index[v],firstFit)
 
-    def _fullest_fit_bin_pack(self,values,valuesSizeCol,bins,binsSizeCol,assign_function):
+    def _fullest_fit_bin_pack(self,values,valuesSizeCol,bins,binsAllocatedCol,binsRemainingCol,assign_function):
         """Pack values into bins using the fullest fit algorithm.
         Traverse the list of values, assigning each to the fullest bin (ie the one with the most currently assigned to it) that has room for it.
 
@@ -229,14 +234,16 @@ class Distributor:
             values (pd.dataframe): Dataframe of values with their sizes. Assumed sorted ascending by size.
             valuesSizeCol (str): The column containing the size of values.
             bins (pd.dataframe): Dataframe of bins with their remaining sizes. Assumed sorted ascending by size.
-            binsSizeCol (str): The column containing the size of bins. This column should be appropriately updated as values are assigned to bins.
+            binsAllocatedCol (str): The column containing the total amount currently allocated to bins. This column should be appropriately updated as values are assigned to bins.
+            binsRemainingCol (str): The column containing the Remaining capacity of bins. This column should be appropriately updated as values are assigned to bins.
             assign_function (:function: value, bin): A function which assigns value to bin, and updates the tables accordingly.
 
         """
         for v in range(len(values)):
-            firstFit = bins[(bins['freeSpace'] >= values.iloc[v][valuesSizeCol])].sort_values(binsSizeCol,ascending=False,inplace=False).tail(1)
-            if (len(firstFit == 1)):
-                assign_function(values.index[v],firstFit.index[0])
+            remainingBins = bins[(bins[binsRemainingCol] >= values.iloc[v][valuesSizeCol])][binsAllocatedCol]
+            if(len(remainingBins) > 0):
+                firstFit = remainingBins.idxmax(axis=1)
+                assign_function(values.index[v],firstFit)
 
 
 
@@ -290,6 +297,7 @@ class Distributor:
         if (self.filesTable.loc[filename,'node'] == 'Null'):
             self.filesTable.loc[filename,'node'] = nodename
             self.nodesTable.loc[nodename,'freeSpace'] -= self.filesTable.loc[filename,'size']
+            self.nodesTable.loc[nodename,'allocatedSpace'] += self.filesTable.loc[filename,'size']
 
     def _assign_file_to_subset(self,filename,subset):
         """Assign a file to a subset.
