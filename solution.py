@@ -35,7 +35,7 @@ def main():
 		with open(args.outputfile,'w') as f:
 			f.write(distributionPlanString)
 	else:
-		print distributionPlanString
+		print(distributionPlanString)
 
 if __name__ == "__main__":
 	main()
